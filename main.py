@@ -1,44 +1,67 @@
 from fastapi import FastAPI
 import requests
 from bs4 import BeautifulSoup
+import re
 
 app = FastAPI()
+
+
+def _parse_body_weight(text: str):
+    """
+    '478(+2)' → (478, +2)
+    '---'      → (None, None)
+    """
+    m = re.match(r"(\d+)\(([-+0-9]+)\)", text)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None, None
+
 
 @app.get("/race_card/{race_id}")
 def get_race_card(race_id: str):
     url = f"https://race.netkeiba.com/race/shutuba.html?race_id={race_id}"
-    headers = {
-        "User-Agent": "Mozilla/5.0"
-    }
+    headers = {"User-Agent": "Mozilla/5.0"}
 
-    res = requests.get(url, headers=headers)
-
+    res = requests.get(url, headers=headers, timeout=10)
     if res.status_code != 200:
         return {"error": "ページ取得失敗", "status_code": res.status_code}
 
     res.encoding = res.apparent_encoding
     soup = BeautifulSoup(res.text, "html.parser")
-    table = soup.find("table", class_="RaceTable01")
 
+    # 出馬表テーブル
+    table = soup.find("table", class_="RaceTable01")
     if not table:
         return {"error": "出馬表テーブルが見つかりません", "race_id": race_id}
 
-    horses = []
     rows = table.find_all("tr", class_="HorseList")
+    horses = []
 
     for row in rows:
         tds = row.find_all("td")
-        if len(tds) < 8:
+
+        # 「印」列が無いぶん、10 列以上あれば OK
+        if len(tds) < 10:
             continue
 
+        # 列の並び（印なし版・2025/06 時点）
+        # 0: 枠   1: 馬番  2: 馬名  3: 性齢  4: 斤量
+        # 5: 騎手 6: 厩舎  7: 馬体重(増減) 8: オッズ 9: 人気
+
+        body_weight, body_diff = _parse_body_weight(tds[7].text.strip())
+
         horses.append({
-            "number": tds[0].text.strip(),              # 馬番
-            "waku": tds[1].text.strip(),                # 枠番
-            "name": tds[3].text.strip(),                # 馬名
-            "sex_age": tds[4].text.strip(),             # 性齢（例：牡5）
-            "weight": tds[5].text.strip(),              # 斤量
-            "jockey": tds[6].text.strip(),              # 騎手名
-            "trainer": tds[7].text.strip()              # 調教師名
+            "waku": tds[0].text.strip(),             # 枠番
+            "number": tds[1].text.strip(),           # 馬番
+            "name": tds[2].text.strip(),             # 馬名
+            "sex_age": tds[3].text.strip(),          # 性齢
+            "carried_weight": tds[4].text.strip(),   # 斤量
+            "jockey": tds[5].text.strip(),           # 騎手
+            "trainer": tds[6].text.strip(),          # 調教師
+            "body_weight": body_weight,              # 馬体重
+            "body_weight_diff": body_diff,           # 増減
+            "odds": tds[8].text.strip(),             # 単勝オッズ
+            "popularity": tds[9].text.strip()        # 人気順位
         })
 
     if not horses:
@@ -48,7 +71,4 @@ def get_race_card(race_id: str):
             "race_id": race_id
         }
 
-    return {
-        "race_id": race_id,
-        "horses": horses
-    }
+    return {"race_id": race_id, "horses": horses}
