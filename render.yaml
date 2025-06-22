@@ -1,6 +1,7 @@
 services:
   - type: web
     name: keiba-api
-    env: python
+    env: python           # ← これを必ず明示
+    plan: free            # 有料なら starter
     buildCommand: "pip install -r requirements.txt"
     startCommand: "python3 -m uvicorn main:app --host 0.0.0.0 --port $PORT"
